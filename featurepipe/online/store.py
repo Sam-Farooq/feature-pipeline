@@ -127,6 +127,10 @@ class FeatureStore:
           one feature. So a row that is not there is reported absent and not
           created.
 
+        The EXISTS and the HSET are two round trips, so the key can expire in
+        between. The ttl is read back after the write and a key that came out
+        persistent is deleted, which turns a rare lost row into a miss rather
+        than into a row that never expires and never updates.
         """
         key = self.key(view, entity_id)
         stored = as_text(self._client.hget(key, AS_OF_FIELD))
@@ -139,6 +143,9 @@ class FeatureStore:
         if abs(stored_at.timestamp() - as_of.timestamp()) > 1e-6:
             return FieldWrite(key, "as_of_mismatch", stored_as_of=stored_at)
         self._client.hset(key, spec.field, encode(value, spec))
+        if self._client.ttl(key) == -1:
+            self._client.delete(key)
+            return FieldWrite(key, "expired_mid_write")
         return FieldWrite(key, "written", stored_as_of=stored_at)
 
     def read_vector(

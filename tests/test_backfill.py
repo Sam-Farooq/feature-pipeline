@@ -11,8 +11,26 @@ from featurepipe.backfill import backfill_offline, backfill_online
 from featurepipe.encoding import AS_OF_FIELD
 from featurepipe.offline.frames import compute_training_frame
 from featurepipe.online.materialize import materialize
-from featurepipe.online.store import Status
+from featurepipe.online.store import FeatureStore, Status
 from tests.conftest import AS_OF
+
+
+class ExpiresOnWrite:
+    """A client whose key disappears between the as_of read and the field write.
+
+    Two round trips cannot be atomic without a script, so this is the race the
+    store has to survive rather than the one it can prevent.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def hset(self, key, *args, **kwargs):
+        self._inner.delete(key)
+        return self._inner.hset(key, *args, **kwargs)
 
 
 @pytest.fixture
@@ -96,6 +114,18 @@ def test_an_undateable_row_is_refused(extended, new_feature, account_events, fil
     report = backfill_online(extended, new_feature, filled, account_events, AS_OF)
     assert report.unreadable_as_of == 1
     assert report.written == 2
+
+
+def test_a_row_that_expires_mid_write_is_removed_rather_than_left_immortal(
+    extended, new_feature, account_events, client
+):
+    store = FeatureStore(ExpiresOnWrite(client))
+    materialize(extended, store, account_events, AS_OF)
+    report = backfill_online(extended, new_feature, store, account_events, AS_OF)
+    assert report.expired_mid_write == 3
+    assert report.written == 0
+    assert client.exists(store.key(extended, "A1")) == 0
+    assert store.read_vector(extended, "A1", AS_OF).status is Status.MISS
 
 
 def test_the_backfilled_value_matches_what_a_full_materialisation_would_write(

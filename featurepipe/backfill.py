@@ -33,6 +33,7 @@ class BackfillReport:
     written: int = 0
     absent: int = 0
     as_of_mismatch: int = 0
+    expired_mid_write: int = 0
     unreadable_as_of: int = 0
     no_history: int = 0
 
@@ -42,6 +43,7 @@ class BackfillReport:
             self.written
             + self.absent
             + self.as_of_mismatch
+            + self.expired_mid_write
             + self.unreadable_as_of
             + self.no_history
         )
@@ -66,6 +68,7 @@ def backfill_online(
         "written": 0,
         "absent": 0,
         "as_of_mismatch": 0,
+        "expired_mid_write": 0,
         "unreadable_as_of": 0,
         "no_history": 0,
     }
