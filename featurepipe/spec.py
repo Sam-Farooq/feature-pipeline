@@ -142,9 +142,17 @@ class FeatureView(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _the_durations_parse(self) -> FeatureView:
+    def _ttl_outlives_a_cycle(self) -> FeatureView:
         for field in ("ttl", "materialize_every", "max_staleness"):
             parse_duration(getattr(self, field))
+        floor = self.materialize_every_seconds + self.max_staleness_seconds
+        if self.ttl_seconds < floor:
+            raise ValueError(
+                f"{self.name}: ttl {self.ttl} is shorter than one materialisation "
+                f"cycle plus the staleness allowance ({self.materialize_every} + "
+                f"{self.max_staleness}), so keys expire between runs and every read "
+                "becomes a miss"
+            )
         return self
 
     @property

@@ -83,9 +83,13 @@ def test_an_empty_window_means_zero_for_a_count_and_unknown_for_a_mean():
     assert mean.empty_value is None
 
 
-def test_a_duration_that_does_not_parse_is_refused():
-    with pytest.raises(ValidationError):
-        view(ttl="soon")
+def test_a_ttl_shorter_than_a_cycle_plus_the_staleness_budget_is_refused():
+    with pytest.raises(ValidationError, match="keys expire between runs"):
+        view(ttl="25m", materialize_every="10m", max_staleness="20m")
+
+
+def test_a_ttl_exactly_as_long_as_the_cycle_plus_the_budget_is_allowed():
+    assert view(ttl="30m", materialize_every="10m", max_staleness="20m").ttl_seconds == 1800
 
 
 def test_a_view_needs_a_feature():
