@@ -6,11 +6,12 @@ from featurepipe.online.materialize import (
     accumulator_as_of,
     materialize,
 )
-from featurepipe.online.store import FeatureStore, ServedVector, Status
+from featurepipe.online.store import FeatureStore, FieldWrite, ServedVector, Status
 
 __all__ = [
     "Accumulator",
     "FeatureStore",
+    "FieldWrite",
     "MaterializeReport",
     "ServedVector",
     "Status",

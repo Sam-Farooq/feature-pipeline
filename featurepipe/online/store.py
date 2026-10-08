@@ -26,7 +26,7 @@ from enum import StrEnum
 from typing import Any
 
 from featurepipe.encoding import AS_OF_FIELD, Value, as_text, decode, encode
-from featurepipe.spec import FeatureView
+from featurepipe.spec import FeatureSpec, FeatureView
 
 
 class Status(StrEnum):
@@ -61,6 +61,13 @@ class ServedVector:
                 + (f": {self.reason}" if self.reason else "")
             )
         return self.values
+
+
+@dataclass(frozen=True)
+class FieldWrite:
+    key: str
+    outcome: str
+    stored_as_of: datetime | None = None
 
 
 class FeatureStore:
@@ -99,6 +106,40 @@ class FeatureStore:
         pipe.expire(key, view.ttl_seconds)
         pipe.execute()
         return key
+
+    def write_field(
+        self,
+        view: FeatureView,
+        spec: FeatureSpec,
+        entity_id: str,
+        value: Value,
+        as_of: datetime,
+    ) -> FieldWrite:
+        """Add or replace one field on a row that already exists.
+
+        This is the backfill primitive, and it is this shape because of two
+        Redis behaviours:
+
+        * HSET on an existing key leaves the other fields and the ttl alone,
+          which is exactly what adding a feature should do.
+        * HSET on a *missing* key creates it with no ttl at all. A backfill
+          that touched an expired entity would leave an immortal row holding
+          one feature. So a row that is not there is reported absent and not
+          created.
+
+        """
+        key = self.key(view, entity_id)
+        stored = as_text(self._client.hget(key, AS_OF_FIELD))
+        if stored is None:
+            return FieldWrite(key, "absent")
+        try:
+            stored_at = datetime.fromtimestamp(float(stored), tz=UTC)
+        except ValueError:
+            return FieldWrite(key, "unreadable_as_of")
+        if abs(stored_at.timestamp() - as_of.timestamp()) > 1e-6:
+            return FieldWrite(key, "as_of_mismatch", stored_as_of=stored_at)
+        self._client.hset(key, spec.field, encode(value, spec))
+        return FieldWrite(key, "written", stored_as_of=stored_at)
 
     def read_vector(
         self,

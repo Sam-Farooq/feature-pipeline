@@ -9,6 +9,7 @@ from featurepipe.clients import memory_client
 from featurepipe.offline.frames import load_events, load_spine
 from featurepipe.online.store import FeatureStore
 from featurepipe.registry import Registry
+from featurepipe.spec import FeatureSpec
 
 ROOT = Path(__file__).resolve().parents[1]
 EVENTS = str(ROOT / "examples" / "events.csv")
@@ -60,3 +61,15 @@ def client():
 @pytest.fixture
 def store(client):
     return FeatureStore(client)
+
+
+@pytest.fixture
+def new_feature() -> FeatureSpec:
+    return FeatureSpec(
+        name="amount_sum_1h",
+        agg="sum",
+        column="amount",
+        window="1h",
+        dtype="float",
+        empty_window="zero",
+    )
