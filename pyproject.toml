@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "feature-pipeline"
+version = "0.10.1"
+description = "One feature definition, computed in batch and served from Redis, with a parity check between the two"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ahtisham Farooq", email = "ahtishamm.farooq@gmail.com" }]
+dependencies = [
+  "pandas>=2.2,<3",
+  "pydantic>=2.7,<3",
+  "redis>=5.0,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.10",
+  "fakeredis>=2.26,<3",
+]
+
+[project.scripts]
+featpipe = "featurepipe.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["featurepipe*"]
+
+[tool.ruff]
+line-length = 96
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
