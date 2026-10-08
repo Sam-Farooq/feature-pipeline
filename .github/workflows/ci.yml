@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest -q
+      - name: the commands in the README
+        run: |
+          featpipe defs
+          featpipe offline --view account_activity \
+            --events examples/events.csv --spine examples/spine_accounts.csv
+          featpipe parity --view account_activity \
+            --events examples/events.csv --spine examples/spine_accounts.csv
+          featpipe parity --view merchant_activity \
+            --events examples/events.csv --spine examples/spine_merchants.csv
+          featpipe demo
