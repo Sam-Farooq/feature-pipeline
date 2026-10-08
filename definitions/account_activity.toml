@@ -1,0 +1,54 @@
+# The shared definition layer. Read once, used by the batch path and the
+# serving path. tomllib is in the 3.11 standard library, so this format costs
+# no dependency.
+
+name = "account_activity"
+entity = "account_id"
+event_time = "event_at"
+recorded_time = "recorded_at"
+
+# ttl must outlive one materialisation cycle plus the staleness allowance, or
+# keys expire between runs and every read is a miss for a reason nothing here
+# explains. Refused at load time if it does not.
+ttl = "36h"
+materialize_every = "10m"
+max_staleness = "20m"
+
+[[features]]
+name = "txn_count_24h"
+agg = "count"
+window = "24h"
+dtype = "int"
+empty_window = "zero"
+
+[[features]]
+name = "amount_sum_24h"
+agg = "sum"
+column = "amount"
+window = "24h"
+dtype = "float"
+empty_window = "zero"
+
+[[features]]
+name = "amount_mean_7d"
+agg = "mean"
+column = "amount"
+window = "7d"
+dtype = "float"
+empty_window = "unknown"
+
+[[features]]
+name = "max_amount_7d"
+agg = "max"
+column = "amount"
+window = "7d"
+dtype = "float"
+empty_window = "unknown"
+
+[[features]]
+name = "distinct_countries_7d"
+agg = "distinct_count"
+column = "country"
+window = "7d"
+dtype = "int"
+empty_window = "zero"

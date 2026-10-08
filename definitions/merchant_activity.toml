@@ -1,0 +1,26 @@
+# A second entity, a shorter window and a tighter freshness budget. Nothing in
+# the code knows how many views there are.
+
+name = "merchant_activity"
+entity = "merchant_id"
+event_time = "event_at"
+recorded_time = "recorded_at"
+
+ttl = "6h"
+materialize_every = "2m"
+max_staleness = "5m"
+
+[[features]]
+name = "merchant_txn_count_1h"
+agg = "count"
+window = "1h"
+dtype = "int"
+empty_window = "zero"
+
+[[features]]
+name = "merchant_amount_mean_1h"
+agg = "mean"
+column = "amount"
+window = "1h"
+dtype = "float"
+empty_window = "unknown"
