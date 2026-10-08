@@ -17,6 +17,7 @@ from __future__ import annotations
 import pandas as pd
 
 from featurepipe.spec import FeatureSpec, FeatureView
+from featurepipe.windows import within_window
 
 AS_OF = "as_of"
 
@@ -104,8 +105,7 @@ def compute_training_frame(
 
     out = spine.copy()
     for spec in specs:
-        lower = pairs[AS_OF] - pd.to_timedelta(spec.window_seconds, unit="s")
-        inside = (pairs[view.event_time] > lower) & (pairs[view.event_time] <= pairs[AS_OF])
+        inside = within_window(pairs[view.event_time], pairs[AS_OF], spec.window_seconds)
         rows = pairs[known & inside]
         series = _aggregate(rows, spec) if len(rows) else pd.Series(dtype="float64")
         series = series.reindex(keys["_row"]).astype("float64")

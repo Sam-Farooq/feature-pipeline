@@ -32,14 +32,15 @@ def test_the_serving_path_holds_its_own_implementation():
     imported = _imported_modules(accumulator_module)
     assert "pandas" not in imported
     assert not any(name.startswith("featurepipe.offline") for name in imported)
+    assert "featurepipe.windows" in imported
 
 
 def test_a_vector_round_trips_through_redis(account_view, account_events, store):
     materialize(account_view, store, account_events, AS_OF)
-    served = store.read_vector(account_view, "A2", AS_OF)
+    served = store.read_vector(account_view, "A1", AS_OF)
     assert served.status is Status.FRESH
-    assert served.values["txn_count_24h"] == 3
-    assert served.values["amount_sum_24h"] == pytest.approx(110.0)
+    assert served.values["txn_count_24h"] == 2
+    assert served.values["amount_sum_24h"] == pytest.approx(85.75)
     assert served.values["distinct_countries_7d"] == 1
 
 
@@ -67,11 +68,11 @@ def test_a_miss_raises_rather_than_handing_over_numbers(account_view, store):
 
 def test_a_partly_written_row_is_a_miss(account_view, account_events, store, client):
     materialize(account_view, store, account_events, AS_OF)
-    client.hdel(store.key(account_view, "A2"), account_view.feature("max_amount_7d").field)
-    served = store.read_vector(account_view, "A2", AS_OF)
+    client.hdel(store.key(account_view, "A1"), account_view.feature("max_amount_7d").field)
+    served = store.read_vector(account_view, "A1", AS_OF)
     assert served.status is Status.MISS
     assert served.missing == ("max_amount_7d",)
-    assert served.values["txn_count_24h"] == 3
+    assert served.values["txn_count_24h"] == 2
 
 
 def test_a_row_that_cannot_be_dated_is_a_miss(account_view, account_events, store, client):
@@ -92,10 +93,10 @@ def test_a_definition_change_renames_the_field_rather_than_reusing_the_value(
             for spec in account_view.features
         )
     )
-    served = store.read_vector(narrowed, "A2", AS_OF)
+    served = store.read_vector(narrowed, "A1", AS_OF)
     assert served.status is Status.MISS
     assert served.missing == ("txn_count_24h",)
-    assert served.values["amount_sum_24h"] == pytest.approx(110.0)
+    assert served.values["amount_sum_24h"] == pytest.approx(85.75)
 
 
 def test_an_entity_the_stream_has_not_seen_has_no_row(account_view, account_events, store):

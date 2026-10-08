@@ -12,7 +12,9 @@ read off the retained events at materialisation time. No pandas in here.
 Memory: one entry per entity ever seen, holding the events of the longest
 window in the view. The entity entry outlives its events on purpose. An
 account whose last transaction aged out still has a 24h count, and that count
-is 0, which is a different statement from "we have no idea".
+is 0, which is a different statement from "we have no idea". Dropping the
+entity would make serving answer MISS where the batch path answers 0, and the
+parity check is how that was found.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from featurepipe.spec import FeatureSpec, FeatureView
+from featurepipe.windows import within_window
 
 Value = int | float | None
 
@@ -108,7 +111,10 @@ class Accumulator:
         bucket = self._events[entity_id]
         out: dict[str, Value] = {}
         for spec in self._view.features:
-            lower = as_of - timedelta(seconds=spec.window_seconds)
-            rows = [row for event_at, _, row in bucket if lower <= event_at <= as_of]
+            rows = [
+                row
+                for event_at, _, row in bucket
+                if within_window(event_at, as_of, spec.window_seconds)
+            ]
             out[spec.name] = apply_aggregation(spec, rows)
         return out
