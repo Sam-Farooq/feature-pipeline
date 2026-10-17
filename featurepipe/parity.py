@@ -9,6 +9,11 @@ vector, and reads it back through the real serving code. The comparison is
 therefore against what a caller would actually be handed, encoding and
 freshness included, not against an in-memory dict.
 
+The spine's instants are history and the store's clock is now, so a row is
+read a moment after it is written whatever `as_of` says. That is the point:
+freshness is a property of the store, and the check still refuses anything
+the serving path will not call FRESH.
+
 It is quadratic in the spine: every row rebuilds the stream from the start.
 That is affordable because this is a check and not a job.
 """
@@ -108,7 +113,7 @@ def check_parity(
             continue
 
         store.write_vector(view, entity_id, accumulator.values_for(entity_id, as_of), as_of)
-        served = store.read_vector(view, entity_id, as_of)
+        served = store.read_vector(view, entity_id)
         if served.status is not Status.FRESH:
             disagreements.append(
                 Disagreement(
