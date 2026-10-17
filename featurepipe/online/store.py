@@ -24,6 +24,11 @@ accepted the row, read from the store's own clock, and it is the only one
 freshness is measured against. Dating a row by `as_of` trusts the clock of a
 machine the reader never talks to, and a writer running an hour fast stamps
 rows that read as fresh an hour past their budget with no counter moving.
+
+An `as_of` more than a few seconds ahead of the store clock is refused at the
+write. A stamp from the future is a broken writer whatever the read path does
+with it, and one loud failure where the row is produced is worth more than a
+quiet one on every read of it afterwards.
 """
 
 from __future__ import annotations
@@ -58,6 +63,10 @@ class Status(StrEnum):
 
 class StaleFeatures(RuntimeError):
     """A caller asked for features it could use and did not get them."""
+
+
+class ClockSkew(ValueError):
+    """A write arrived stamped further ahead of the store clock than allowed."""
 
 
 @dataclass(frozen=True)
@@ -132,6 +141,12 @@ class FeatureStore:
         cost. It buys a row that can be dated without trusting the machine that
         wrote it, and TIME cannot go inside the MULTI because its answer is
         needed to build the HSET.
+
+        That same reading is what the as_of is checked against. A writer
+        comparing its as_of to its own clock detects nothing, because a fast
+        clock is fast in both halves of the comparison; the store's clock is
+        the nearest one the writer does not own. An as_of behind it is ordinary
+        and allowed: a batch run over history, or a job a little late.
         """
         mapping = {
             spec.field: encode(values[spec.name], spec)
@@ -140,8 +155,17 @@ class FeatureStore:
         }
         if not mapping:
             raise ValueError(f"{view.name}: nothing to write for entity {entity_id!r}")
+        written_at = self._clock.now()
+        ahead = (as_of - written_at).total_seconds()
+        if ahead > self._max_skew_seconds:
+            raise ClockSkew(
+                f"{view.name}/{entity_id}: as_of is {ahead:.1f}s ahead of the store clock, "
+                f"more than the {self._max_skew_seconds:g}s allowed. A row stamped in the "
+                "future reads as fresh for as long as the clock is wrong, so this is "
+                "refused rather than stored"
+            )
         mapping[AS_OF_FIELD] = encode_instant(as_of)
-        mapping[WRITTEN_AT_FIELD] = encode_instant(self._clock.now())
+        mapping[WRITTEN_AT_FIELD] = encode_instant(written_at)
         key = self.key(view, entity_id)
         pipe = self._client.pipeline(transaction=True)
         pipe.hset(key, mapping=mapping)

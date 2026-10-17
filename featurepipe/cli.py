@@ -21,7 +21,7 @@ from featurepipe.clients import MEMORY, client_for, memory_client
 from featurepipe.clock import ManualClock
 from featurepipe.offline.frames import compute_training_frame, load_events, load_spine
 from featurepipe.online.materialize import materialize
-from featurepipe.online.store import FeatureStore
+from featurepipe.online.store import ClockSkew, FeatureStore
 from featurepipe.parity import check_parity
 from featurepipe.registry import DefinitionError, Registry
 from featurepipe.spec import FeatureSpec, FeatureView
@@ -239,6 +239,15 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         f"{again.no_history} unknown to the stream, "
         f"ttl of A3 now {store.ttl_of(view, 'A3')} (-2 is no key)"
     )
+
+    print("\n9. a writer whose clock is an hour fast. Its as_of is an hour ahead of")
+    print("   the store's own clock, and a row stamped in the future would read as")
+    print("   fresh for as long as the clock is wrong, so the write is refused")
+    try:
+        store.write_vector(view, "A1", {"txn_count_24h": 2}, as_of + timedelta(hours=1))
+        print("   written, which is the bug this check exists for")
+    except ClockSkew as refused:
+        print(f"   refused: {refused}")
     return 0
 
 

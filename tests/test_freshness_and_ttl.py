@@ -13,7 +13,13 @@ import pytest
 
 from featurepipe.encoding import AS_OF_FIELD, WRITTEN_AT_FIELD, encode_instant
 from featurepipe.online.materialize import materialize
-from featurepipe.online.store import StaleFeatures, Status
+from featurepipe.online.store import (
+    MAX_SKEW_SECONDS,
+    ClockSkew,
+    FeatureStore,
+    StaleFeatures,
+    Status,
+)
 from featurepipe.spec import FeatureView
 from tests.conftest import AS_OF
 
@@ -81,6 +87,46 @@ def test_a_row_stamped_by_a_fast_clock_is_not_fresh_forever(
     assert served.age_seconds == 1500.0
     assert served.as_of == ahead
     assert served.written_at == AS_OF
+
+
+def test_an_as_of_ahead_of_the_store_clock_is_refused(
+    account_view, account_events, timed_store
+):
+    """The other half, and the loud one.
+
+    A writer an hour fast believes as_of is now. Comparing it to its own clock
+    would find nothing wrong, so it is compared to the store's, which is the
+    nearest clock the writer does not own.
+    """
+    fast = AS_OF + timedelta(hours=1)
+    with pytest.raises(ClockSkew, match=r"3600\.0s ahead of the store clock"):
+        materialize(account_view, timed_store, account_events, fast)
+    assert timed_store.read_vector(account_view, "A1").status is Status.MISS
+
+
+def test_an_as_of_at_the_edge_of_the_allowance_is_written(
+    account_view, account_events, timed_store
+):
+    """The guard has to let the ordinary case through: a writer a second or two
+    out, or a job that rounds as_of to the top of the second."""
+    assert MAX_SKEW_SECONDS == 5.0
+    materialize(
+        account_view, timed_store, account_events, AS_OF + timedelta(seconds=MAX_SKEW_SECONDS)
+    )
+    assert timed_store.read_vector(account_view, "A1").status is Status.FRESH
+
+
+def test_a_wider_allowance_can_be_declared_by_a_store_that_needs_one(
+    account_view, account_events, client, store_clock
+):
+    """A writer that stamps the next materialisation slot rather than now is a
+    real pattern, and five seconds is not enough for it."""
+    slot = AS_OF + timedelta(minutes=5)
+    with pytest.raises(ClockSkew):
+        materialize(account_view, FeatureStore(client, clock=store_clock), account_events, slot)
+    forgiving = FeatureStore(client, clock=store_clock, max_skew_seconds=600)
+    materialize(account_view, forgiving, account_events, slot)
+    assert forgiving.read_vector(account_view, "A1").status is Status.FRESH
 
 
 def test_an_as_of_behind_the_store_clock_does_not_age_the_row(
