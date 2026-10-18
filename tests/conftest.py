@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from featurepipe.clients import memory_client
+from featurepipe.clock import ManualClock
 from featurepipe.offline.frames import load_events, load_spine
 from featurepipe.online.store import FeatureStore
 from featurepipe.registry import Registry
@@ -60,7 +61,20 @@ def client():
 
 @pytest.fixture
 def store(client):
+    """A store on the store's own clock, which is what production has."""
     return FeatureStore(client)
+
+
+@pytest.fixture
+def store_clock() -> ManualClock:
+    """The store clock, started at AS_OF, for tests that have to move time."""
+    return ManualClock(AS_OF)
+
+
+@pytest.fixture
+def timed_store(client, store_clock):
+    """A store whose clock the test advances, so an age is exact and not nearly."""
+    return FeatureStore(client, clock=store_clock)
 
 
 @pytest.fixture

@@ -11,10 +11,13 @@ Redis hash fields are bytes, so every value becomes text. Two rules:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from featurepipe.spec import FeatureSpec
 
 UNKNOWN = "\x00unknown"
 AS_OF_FIELD = "_as_of"
+WRITTEN_AT_FIELD = "_written_at"
 
 Value = int | float | None
 
@@ -23,6 +26,17 @@ def as_text(raw: str | bytes | None) -> str | None:
     if raw is None:
         return None
     return raw.decode("utf-8") if isinstance(raw, bytes) else raw
+
+
+def encode_instant(moment: datetime) -> str:
+    """One of the two reserved timestamp fields on a row."""
+    return repr(moment.timestamp())
+
+
+def decode_instant(raw: str | bytes | None) -> datetime:
+    """The inverse. TypeError if the field is absent, ValueError if it is junk,
+    which is how a row that cannot be dated becomes a miss rather than a guess."""
+    return datetime.fromtimestamp(float(as_text(raw)), tz=UTC)
 
 
 def encode(value: Value, spec: FeatureSpec) -> str:

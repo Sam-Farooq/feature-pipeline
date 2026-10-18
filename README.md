@@ -109,15 +109,56 @@ gets into production quietly.
 
 | Status | Means | What the caller gets |
 |---|---|---|
-| FRESH | computed within the view's staleness budget | the values |
-| STALE | real values, computed too long ago | the values and the age, and `require()` raises |
-| MISS | no row, or no field at the current definition version | no values at all, never substituted |
+| FRESH | stored within the view's staleness budget | the values |
+| STALE | real values the store has held too long, or whose age two clocks disagree about | the values and the age, and `require()` raises |
+| MISS | no row, no field at the current definition version, or no way to date the row | no values at all, never substituted |
 
-`account_activity` allows 20 minutes. A row read 1200 seconds after it was
-written is fresh; at 1201 it is stale and says `computed 1201s ago, budget is
+`account_activity` allows 20 minutes. A row read 1200 seconds after the store
+took it is fresh; at 1201 it is stale and says `stored 1201s ago, budget is
 1200s`. A partly written row is a miss rather than a row with holes, and a row
-whose `_as_of` cannot be parsed is a miss too, because a value nobody can date
-cannot be judged against a budget.
+that cannot be dated is a miss too, because a value nobody can date cannot be
+judged against a budget.
+
+### Which clock the age is measured on
+
+A row carries two timestamps and they answer different questions.
+
+| Field | Written by | Means |
+|---|---|---|
+| `_as_of` | the writer | the instant the features were computed over. Event time, so the batch path joins on it and a backfill matches against it |
+| `_written_at` | the store's own clock, read with `TIME` | when the store took the row, and the only one freshness is measured against |
+
+Freshness used to be the reader's `now` minus `as_of`, which trusted the clock
+of a machine the reader never talks to. A writer an hour fast stamped every row
+an hour into the future: a row computed at 09:00 and read at 09:25 came back
+FRESH against a twenty minute budget, with its age reported as -2100 seconds,
+and nothing counted it. A slow writer fails the other way and makes a current
+row look stale, which costs a recompute nobody needed.
+
+Both ends of the subtraction come from the store's clock now, so neither the
+writer's nor the reader's is in the arithmetic. `read_vector` has no `now`
+argument: a caller cannot choose the clock its answer is judged on.
+`featpipe serve --at` is still there and is an explicit override for looking at
+a row, rather than the only way to ask.
+
+What that costs, and it is worth knowing before trusting it:
+
+- a write is one round trip more, because `TIME` has to be asked before the
+  `HSET` its answer goes into and cannot ride inside the `MULTI`. A read of a
+  row that exists is one more too, though a miss still costs one. A Lua script
+  would get the write back and is not written.
+- a row with no `_written_at`, or an unreadable one, is a MISS. That includes
+  every row written by a version before this one, until the next
+  materialisation replaces it, which for `account_activity` is ten minutes.
+  The alternative is dating it by the writer's clock again.
+- a store clock that steps backwards by more than the five second skew
+  allowance is answered STALE with the reason, not FRESH off a negative age.
+
+An `as_of` more than that allowance *ahead* of the store clock is refused at
+the write, exit 2. The comparison has to be against a clock the writer does not
+own: a writer checking its own `as_of` against its own `now()` detects nothing,
+because a fast clock is fast in both halves of that comparison. The ninth step
+of `featpipe demo` is that refusal.
 
 The ttl is not the staleness budget. It is 36h, and the loader refuses any view
 whose ttl is shorter than one materialisation interval plus the staleness
@@ -134,10 +175,11 @@ featpipe demo
 ```
 
 `demo` runs the whole cycle in one process against `fakeredis`. No Redis, no
-network, no service. Eight steps: materialise, read it fresh, read it 25
+network, no service. Nine steps: materialise, read it fresh, read it 25
 minutes later, read an entity the stream has never seen, read one whose history
-has aged out, redefine a feature, add a new one and back it in, and aim that
-backfill at a row that has expired.
+has aged out, redefine a feature, add a new one and back it in, aim that
+backfill at a row that has expired, and try to write a row stamped an hour
+ahead of the store's clock.
 
 Steps 4 and 5 are the pair worth reading:
 
@@ -286,9 +328,12 @@ drives it with a client that deletes the key on every `hset`.
   windows with zeros; serving can only answer MISS. The parity check reports
   this rather than hiding it, and the spine for a training run should be built
   from entities the stream has seen.
-- **Clock disagreement.** Freshness is `now` minus the row's `as_of`. A row
-  stamped in the future by a machine with a fast clock reads as fresh forever.
-  The materialising clock is the only one that matters and nothing enforces it.
+- **A writer whose `as_of` lags its own clock.** A job computing an hour-old
+  window writes rows that are new in the store and old in event time, and they
+  read FRESH. One row cannot tell a lagging job apart from a slow clock, and
+  refusing to serve either would make a slow clock an outage, so the read path
+  judges only how long the store has held the row. Watching the lag belongs
+  where `as_of` and the store clock are both in hand, which is the write.
 - **A late event that arrives after the window it belongs to has closed.** The
   batch path, run again later, will include it and change a historical feature
   value. Serving will not. Reproducibility of a training frame is a property of
@@ -299,7 +344,7 @@ drives it with a client that deletes the key on every `hset`.
 ## Tests
 
 ```bash
-pytest -q        # 135 tests, no Redis, no network, no service
+pytest -q        # 152 tests, no Redis, no network, no service
 ```
 
 `fakeredis` stands in for the serving store and the batch path runs on frames

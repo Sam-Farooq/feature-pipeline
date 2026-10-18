@@ -37,7 +37,7 @@ def test_the_serving_path_holds_its_own_implementation():
 
 def test_a_vector_round_trips_through_redis(account_view, account_events, store):
     materialize(account_view, store, account_events, AS_OF)
-    served = store.read_vector(account_view, "A1", AS_OF)
+    served = store.read_vector(account_view, "A1")
     assert served.status is Status.FRESH
     assert served.values["txn_count_24h"] == 2
     assert served.values["amount_sum_24h"] == pytest.approx(85.75)
@@ -46,7 +46,7 @@ def test_a_vector_round_trips_through_redis(account_view, account_events, store)
 
 def test_a_computed_unknown_is_not_a_zero(account_view, account_events, store):
     materialize(account_view, store, account_events, AS_OF)
-    served = store.read_vector(account_view, "A3", AS_OF)
+    served = store.read_vector(account_view, "A3")
     assert served.status is Status.FRESH
     assert served.values["txn_count_24h"] == 0
     assert served.values["amount_mean_7d"] is None
@@ -54,7 +54,7 @@ def test_a_computed_unknown_is_not_a_zero(account_view, account_events, store):
 
 
 def test_an_absent_row_is_a_miss_and_not_a_row_of_empty_values(account_view, store):
-    served = store.read_vector(account_view, "A1", AS_OF)
+    served = store.read_vector(account_view, "A1")
     assert served.status is Status.MISS
     assert set(served.values.values()) == {None}
     assert served.missing == tuple(spec.name for spec in account_view.features)
@@ -63,13 +63,13 @@ def test_an_absent_row_is_a_miss_and_not_a_row_of_empty_values(account_view, sto
 
 def test_a_miss_raises_rather_than_handing_over_numbers(account_view, store):
     with pytest.raises(StaleFeatures, match="miss"):
-        store.read_vector(account_view, "A1", AS_OF).require()
+        store.read_vector(account_view, "A1").require()
 
 
 def test_a_partly_written_row_is_a_miss(account_view, account_events, store, client):
     materialize(account_view, store, account_events, AS_OF)
     client.hdel(store.key(account_view, "A1"), account_view.feature("max_amount_7d").field)
-    served = store.read_vector(account_view, "A1", AS_OF)
+    served = store.read_vector(account_view, "A1")
     assert served.status is Status.MISS
     assert served.missing == ("max_amount_7d",)
     assert served.values["txn_count_24h"] == 2
@@ -78,7 +78,7 @@ def test_a_partly_written_row_is_a_miss(account_view, account_events, store, cli
 def test_a_row_that_cannot_be_dated_is_a_miss(account_view, account_events, store, client):
     materialize(account_view, store, account_events, AS_OF)
     client.hset(store.key(account_view, "A1"), AS_OF_FIELD, "not-a-timestamp")
-    served = store.read_vector(account_view, "A1", AS_OF)
+    served = store.read_vector(account_view, "A1")
     assert served.status is Status.MISS
     assert "unreadable" in served.reason
 
@@ -93,7 +93,7 @@ def test_a_definition_change_renames_the_field_rather_than_reusing_the_value(
             for spec in account_view.features
         )
     )
-    served = store.read_vector(narrowed, "A1", AS_OF)
+    served = store.read_vector(narrowed, "A1")
     assert served.status is Status.MISS
     assert served.missing == ("txn_count_24h",)
     assert served.values["amount_sum_24h"] == pytest.approx(85.75)
@@ -101,7 +101,7 @@ def test_a_definition_change_renames_the_field_rather_than_reusing_the_value(
 
 def test_an_entity_the_stream_has_not_seen_has_no_row(account_view, account_events, store):
     materialize(account_view, store, account_events, AS_OF)
-    assert store.read_vector(account_view, "A9", AS_OF).status is Status.MISS
+    assert store.read_vector(account_view, "A9").status is Status.MISS
 
 
 def test_an_entity_keeps_a_row_after_its_last_event_ages_out(account_view, account_events):
@@ -200,5 +200,5 @@ def test_a_row_is_written_with_its_ttl_in_one_transaction(account_view, account_
 def test_dropping_a_row_leaves_the_others(account_view, account_events, store):
     materialize(account_view, store, account_events, AS_OF)
     assert store.drop(account_view, "A1") == 1
-    assert store.read_vector(account_view, "A1", AS_OF).status is Status.MISS
-    assert store.read_vector(account_view, "A2", AS_OF).status is Status.FRESH
+    assert store.read_vector(account_view, "A1").status is Status.MISS
+    assert store.read_vector(account_view, "A2").status is Status.FRESH

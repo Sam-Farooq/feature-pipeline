@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feature-pipeline"
-version = "0.10.1"
+version = "0.11.0"
 description = "One feature definition, computed in batch and served from Redis, with a parity check between the two"
 readme = "README.md"
 requires-python = ">=3.11"

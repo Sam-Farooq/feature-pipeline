@@ -18,9 +18,10 @@ from pathlib import Path
 from featurepipe import __version__
 from featurepipe.backfill import backfill_online
 from featurepipe.clients import MEMORY, client_for, memory_client
+from featurepipe.clock import ManualClock
 from featurepipe.offline.frames import compute_training_frame, load_events, load_spine
 from featurepipe.online.materialize import materialize
-from featurepipe.online.store import FeatureStore
+from featurepipe.online.store import ClockSkew, FeatureStore
 from featurepipe.parity import check_parity
 from featurepipe.registry import DefinitionError, Registry
 from featurepipe.spec import FeatureSpec, FeatureView
@@ -137,9 +138,9 @@ def _cmd_materialize(args: argparse.Namespace) -> int:
 
 def _cmd_serve(args: argparse.Namespace) -> int:
     view = _registry(args).view(args.view)
-    store = FeatureStore(client_for(args.redis))
-    now = args.at or datetime.now(tz=UTC)
-    served = store.read_vector(view, args.entity, now)
+    clock = ManualClock(args.at) if args.at else None
+    store = FeatureStore(client_for(args.redis), clock=clock)
+    served = store.read_vector(view, args.entity)
     _print_vector(view, args.entity, served)
     if args.strict and not served.usable:
         return UNUSABLE
@@ -168,7 +169,8 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     view = registry.view("account_activity")
     events = load_events(args.events, view)
     as_of = args.as_of
-    store = FeatureStore(memory_client())
+    client = memory_client()
+    store = FeatureStore(client, clock=ManualClock(as_of))
 
     print(f"1. materialise {view.name} at {_stamp(as_of)}")
     report = materialize(view, store, events, as_of)
@@ -183,17 +185,19 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     )
 
     print("\n2. a row computed a moment ago")
-    _print_vector(view, "A1", store.read_vector(view, "A1", as_of))
+    _print_vector(view, "A1", store.read_vector(view, "A1"))
 
-    print(f"\n3. the same row read {format_duration(25 * 60)} later")
-    _print_vector(view, "A1", store.read_vector(view, "A1", as_of + timedelta(minutes=25)))
+    print(f"\n3. the same row read {format_duration(25 * 60)} later, by a reader whose")
+    print("   store clock has moved on. Nothing about the row changed")
+    later = FeatureStore(client, clock=ManualClock(as_of + timedelta(minutes=25)))
+    _print_vector(view, "A1", later.read_vector(view, "A1"))
 
     print("\n4. an entity the stream has never seen: a miss, not a set of zeros")
-    _print_vector(view, "A9", store.read_vector(view, "A9", as_of))
+    _print_vector(view, "A9", store.read_vector(view, "A9"))
 
     print("\n5. an entity whose history has all aged out: zeros where zero is the")
     print("   answer, unknown where there is nothing to average")
-    _print_vector(view, "A3", store.read_vector(view, "A3", as_of))
+    _print_vector(view, "A3", store.read_vector(view, "A3"))
 
     narrowed = view.with_features(
         tuple(
@@ -203,7 +207,7 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     )
     print("\n6. txn_count_24h redefined over 12h. Its field name moves with its")
     print("   definition, so the old number is not served under the new meaning")
-    _print_vector(narrowed, "A1", store.read_vector(narrowed, "A1", as_of))
+    _print_vector(narrowed, "A1", store.read_vector(narrowed, "A1"))
 
     added = FeatureSpec(
         name="amount_sum_1h",
@@ -216,14 +220,14 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     extended = view.with_features((*view.features, added))
     before = store.ttl_of(view, "A1")
     print(f"\n7. a new feature {added.name} arrives. Before the backfill it is a miss")
-    _print_vector(extended, "A1", store.read_vector(extended, "A1", as_of))
+    _print_vector(extended, "A1", store.read_vector(extended, "A1"))
     filled = backfill_online(extended, added, store, events, as_of)
     after = store.ttl_of(view, "A1")
     print(
         f"   backfilled: {filled.written} rows written, {filled.absent} absent, "
         f"ttl {before}s before and {after}s after"
     )
-    _print_vector(extended, "A1", store.read_vector(extended, "A1", as_of))
+    _print_vector(extended, "A1", store.read_vector(extended, "A1"))
 
     print("\n8. A3's row expires, then the same backfill runs again. HSET on a")
     print("   missing key would create one with no ttl at all, holding a single")
@@ -235,6 +239,15 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         f"{again.no_history} unknown to the stream, "
         f"ttl of A3 now {store.ttl_of(view, 'A3')} (-2 is no key)"
     )
+
+    print("\n9. a writer whose clock is an hour fast. Its as_of is an hour ahead of")
+    print("   the store's own clock, and a row stamped in the future would read as")
+    print("   fresh for as long as the clock is wrong, so the write is refused")
+    try:
+        store.write_vector(view, "A1", {"txn_count_24h": 2}, as_of + timedelta(hours=1))
+        print("   written, which is the bug this check exists for")
+    except ClockSkew as refused:
+        print(f"   refused: {refused}")
     return 0
 
 
@@ -278,7 +291,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="read one entity's row")
     serve.add_argument("--view", required=True)
     serve.add_argument("--entity", required=True)
-    serve.add_argument("--at", type=_timestamp, help="the clock to judge freshness against")
+    serve.add_argument(
+        "--at",
+        type=_timestamp,
+        help="judge freshness against this instant instead of the store's own clock",
+    )
     serve.add_argument("--redis", default="redis://localhost:6379/0")
     serve.add_argument("--strict", action="store_true", help=f"exit {UNUSABLE} unless fresh")
     serve.set_defaults(handler=_cmd_serve)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pandas as pd
 import pytest
 
@@ -90,6 +92,34 @@ def test_the_demo_runs_the_whole_cycle_without_redis(capsys):
     assert "ttl 129600s before and 129600s after" in out
     assert "amount_sum_1h          10.25" in out
     assert "-2 is no key" in out
+
+
+def test_the_demo_ends_by_refusing_a_fast_writers_write(capsys):
+    """The last step of the demo is the guard being fed what it exists to
+    reject, so a reader of the output sees the refusal and not a claim."""
+    code, out, _ = run(capsys, "demo", "--events", EVENTS)
+    assert code == 0
+    assert "refused: account_activity/A1: as_of is 3600.0s ahead of the store clock" in out
+
+
+def test_materialising_with_an_as_of_in_the_future_is_refused(capsys):
+    """Exit 2, the code for anything refused, rather than a store full of rows
+    that read as fresh until the clock is fixed."""
+    ahead = datetime.now(tz=UTC) + timedelta(hours=1)
+    code, _, err = run(
+        capsys,
+        "materialize",
+        "--view",
+        "account_activity",
+        "--events",
+        EVENTS,
+        "--as-of",
+        ahead.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "--redis",
+        "memory",
+    )
+    assert code == 2
+    assert "ahead of the store clock" in err
 
 
 def test_serve_reads_nothing_from_an_empty_store(capsys):

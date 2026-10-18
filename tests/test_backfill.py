@@ -45,7 +45,7 @@ def filled(account_view, account_events, store):
 
 
 def test_a_new_feature_is_a_miss_before_it_is_backfilled(extended, filled):
-    served = filled.read_vector(extended, "A1", AS_OF)
+    served = filled.read_vector(extended, "A1")
     assert served.status is Status.MISS
     assert served.missing == ("amount_sum_1h",)
 
@@ -55,7 +55,7 @@ def test_backfilling_writes_one_field_on_every_row_that_exists(
 ):
     report = backfill_online(extended, new_feature, filled, account_events, AS_OF)
     assert (report.written, report.absent, report.no_history) == (3, 0, 0)
-    served = filled.read_vector(extended, "A1", AS_OF)
+    served = filled.read_vector(extended, "A1")
     assert served.status is Status.FRESH
     assert served.values["amount_sum_1h"] == pytest.approx(10.25)
 
@@ -125,7 +125,7 @@ def test_a_row_that_expires_mid_write_is_removed_rather_than_left_immortal(
     assert report.expired_mid_write == 3
     assert report.written == 0
     assert client.exists(store.key(extended, "A1")) == 0
-    assert store.read_vector(extended, "A1", AS_OF).status is Status.MISS
+    assert store.read_vector(extended, "A1").status is Status.MISS
 
 
 def test_the_backfilled_value_matches_what_a_full_materialisation_would_write(
